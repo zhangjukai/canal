@@ -6,20 +6,25 @@ import com.alibaba.otter.canal.connector.core.spi.CanalMQProducer;
 import com.alibaba.otter.canal.connector.core.util.Callback;
 import com.alibaba.otter.canal.instance.core.CanalInstance;
 import com.alibaba.otter.canal.instance.core.CanalMQConfig;
+import com.alibaba.otter.canal.protocol.CanalEntry;
 import com.alibaba.otter.canal.protocol.ClientIdentity;
 import com.alibaba.otter.canal.protocol.Message;
 import com.alibaba.otter.canal.server.embedded.CanalServerWithEmbedded;
+import com.google.protobuf.InvalidProtocolBufferException;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 public class CanalMQStarter {
 
@@ -176,7 +181,22 @@ public class CanalMQStarter {
 
                     final long batchId = message.getId();
                     try {
+                        if(mqConfig.getEnableLoopback()) {
+                            // 处理数据回环
+                            List<CanalEntry.Entry> newEntries = handleLoopback(message.getEntries());
+                            message.setEntries(newEntries);
+                        } else { // 处理掉可能因mysql开启了binlog_rows_query_log_events产生的QUERY语句
+                            List<CanalEntry.Entry> resultList = message.getEntries().stream().filter(entry ->
+                                            CanalEntry.EventType.QUERY.getNumber() != entry.getHeader().getEventType().getNumber())
+                                    .collect(Collectors.toList());
+                            message.setEntries(resultList);
+                        }
+
                         int size = message.isRaw() ? message.getRawEntries().size() : message.getEntries().size();
+                        if(batchId != -1 && size==0) {
+                            // 提交确认
+                            canalServer.ack(clientIdentity, batchId);
+                        }
                         if (batchId != -1 && size != 0) {
                             canalMQProducer.send(canalDestination, message, new Callback() {
 
@@ -226,5 +246,62 @@ public class CanalMQStarter {
         public void stop() {
             running.set(false);
         }
+    }
+
+    /**
+     * 处理数据回环
+     * @param entries
+     * @return
+     */
+    private List<CanalEntry.Entry> handleLoopback(List<CanalEntry.Entry> entries) {
+        List<List<CanalEntry.Entry>> tmpListEntries = new ArrayList<>();
+        List<List<CanalEntry.Entry>> newListEntries = new ArrayList<>();
+        List<CanalEntry.Entry> tmpEntries = null;
+        for (CanalEntry.Entry entry : entries) {
+            if(CanalEntry.EntryType.TRANSACTIONBEGIN.getNumber() == entry.getEntryType().getNumber()) {
+                if(tmpEntries!=null) {
+                    tmpListEntries.add(tmpEntries);
+                }
+                tmpEntries = new ArrayList<>();
+                tmpEntries.add(entry);
+            }else if(CanalEntry.EntryType.TRANSACTIONEND.getNumber() == entry.getEntryType().getNumber()) {
+                if (tmpEntries != null) {
+                    tmpEntries.add(entry);
+                    tmpListEntries.add(tmpEntries);
+                    tmpEntries = null;
+                }
+            } else {
+                if(tmpEntries==null) {
+                    tmpEntries = new ArrayList<>();
+                }
+                tmpEntries.add(entry);
+            }
+        }
+
+        tmpListEntries.forEach(list->{
+            AtomicBoolean flag = new AtomicBoolean(true);
+            list.forEach(entry -> {
+                if(CanalEntry.EventType.QUERY.getNumber() == entry.getHeader().getEventType().getNumber()) {
+                    try {
+                        CanalEntry.RowChange rowChange = CanalEntry.RowChange.parseFrom(entry.getStoreValue());
+                        String sql = rowChange.getSql();
+                        if(StringUtils.isNotEmpty(sql) && sql.endsWith("/*kcdc*/")) {
+                            flag.set(false);
+                            return;
+                        }
+                    } catch (InvalidProtocolBufferException e) {
+                        e.printStackTrace();
+                    }
+                }
+            });
+            if (flag.get()) {
+                // 过滤掉query语句
+                List<CanalEntry.Entry> resultList = list.stream().filter(entry ->
+                                CanalEntry.EventType.QUERY.getNumber() != entry.getHeader().getEventType().getNumber())
+                        .collect(Collectors.toList());
+                newListEntries.add(resultList);
+            }
+        });
+        return  newListEntries.stream().collect(ArrayList::new, ArrayList::addAll, ArrayList::addAll);
     }
 }

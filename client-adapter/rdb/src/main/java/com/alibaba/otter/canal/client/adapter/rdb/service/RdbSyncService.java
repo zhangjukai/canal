@@ -17,6 +17,7 @@ import java.util.function.Function;
 
 import javax.sql.DataSource;
 
+import com.alibaba.otter.canal.client.adapter.support.Constant;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -277,7 +278,8 @@ public class RdbSyncService {
             Object value = data.get(srcColumnName);
             BatchExecutor.setValue(values, type, value);
         }
-
+        // 添加双向同步sql标识
+        insertSql.append(" ").append(Constant.SQL_ANNOTATE);
         try {
             batchExecutor.execute(insertSql.toString(), values);
         } catch (SQLException e) {
@@ -350,6 +352,8 @@ public class RdbSyncService {
 
         // 拼接主键
         appendCondition(dbMapping, updateSql, ctype, values, data, old);
+        // 添加双向同步sql标识
+        updateSql.append(" ").append(Constant.SQL_ANNOTATE);
         batchExecutor.execute(updateSql.toString(), values);
         if (logger.isTraceEnabled()) {
             logger.trace("Update target table, sql: {}", updateSql);
@@ -378,6 +382,7 @@ public class RdbSyncService {
         List<Map<String, ?>> values = new ArrayList<>();
         // 拼接主键
         appendCondition(dbMapping, sql, ctype, values, data);
+        sql.append(" ").append(Constant.SQL_ANNOTATE);
         batchExecutor.execute(sql.toString(), values);
         if (logger.isTraceEnabled()) {
             logger.trace("Delete from target table, sql: {}", sql);
@@ -393,6 +398,7 @@ public class RdbSyncService {
         DbMapping dbMapping = config.getDbMapping();
         StringBuilder sql = new StringBuilder();
         sql.append("TRUNCATE TABLE ").append(SyncUtil.getDbTableName(dbMapping));
+        sql.append(" ").append(Constant.SQL_ANNOTATE);
         batchExecutor.execute(sql.toString(), new ArrayList<>());
         if (logger.isTraceEnabled()) {
             logger.trace("Truncate target table, sql: {}", sql);

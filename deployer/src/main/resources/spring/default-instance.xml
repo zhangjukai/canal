@@ -207,5 +207,6 @@
 		<property name="partitionHash" value="${canal.mq.partitionHash}" />
 		<property name="dynamicTopicPartitionNum" value="${canal.mq.dynamicTopicPartitionNum}" />
 		<property name="enableDynamicQueuePartition" value="${canal.mq.enableDynamicQueuePartition}" />
+		<property name="enableLoopback" value="${canal.mq.enableLoopback}" />
 	</bean>
 </beans>

@@ -9,6 +9,8 @@ public class CanalMQConfig {
     private String  dynamicTopic;
     private String  dynamicTopicPartitionNum;
     private Boolean enableDynamicQueuePartition;
+    // 数据回环，用于判断是否双向同步
+    private Boolean enableLoopback;
 
     public String getTopic() {
         return topic;
@@ -64,5 +66,13 @@ public class CanalMQConfig {
 
     public void setEnableDynamicQueuePartition(Boolean enableDynamicQueuePartition) {
         this.enableDynamicQueuePartition = enableDynamicQueuePartition;
+    }
+
+    public Boolean getEnableLoopback() {
+        return enableLoopback;
+    }
+
+    public void setEnableLoopback(Boolean enableLoopback) {
+        this.enableLoopback = enableLoopback;
     }
 }
